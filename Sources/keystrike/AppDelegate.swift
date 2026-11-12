@@ -77,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // volume
         let volItem = NSMenuItem(title: "Volume", action: nil, keyEquivalent: "")
-        volItem.view = VolumeRow(engine: app.engine, value: app.volume) { [weak self] v in
+        volItem.view = VolumeRow(value: app.volume) { [weak self] v in
             self?.app.volume = v
         }
         menu.addItem(volItem)
@@ -172,7 +172,7 @@ extension AppDelegate: SettingsViewDelegate {}
 /// A volume slider row suitable for embedding in a menu.
 private final class VolumeRow: NSView {
     private let slider = NSSlider()
-    init(engine: AudioEngine, value: Double, onChange: @escaping (Double) -> Void) {
+    init(value: Double, onChange: @escaping (Double) -> Void) {
         super.init(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
         slider.isContinuous = true
         slider.minValue = 0

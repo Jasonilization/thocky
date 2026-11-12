@@ -87,11 +87,6 @@ final class AudioEngine {
         ks_play(pack, Int32(group), Int32(tierLo), Int32(tierHi), mix, Int32(event), gain)
     }
 
-    func playTierPreview(_ tier: Int, of pack: PackInfo) {
-        guard select(pack: pack) else { return }
-        play(group: KeyMap.generic, tierLo: tier, tierHi: tier, mix: 0, event: Int(KS_EVENT_PRESS), gain: 1.0)
-    }
-
     // MARK: diagnostics
 
     var stats: Stats {

@@ -70,8 +70,6 @@ struct PackInfo: Identifiable, Hashable {
         return PackInfo(id: id, name: name, family: family, directory: dir, clipCount: clips)
     }
 
-    static let families = ["linear", "tactile", "clicky", "thocky", "scissor", "membrane", "typewriter"]
-
     var familyLabel: String {
         family.capitalized
     }
