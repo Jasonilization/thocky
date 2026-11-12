@@ -1,0 +1,16 @@
+# build artefacts
+.build/
+.swiftpm/
+*.o
+*.a
+*.so
+*.dSYM/
+
+# user state and OS noise
+*.user.log
+.DS_Store
+
+# upstream recordings: keep the extracted sources (so `make packs` works) and
+# the license, but not the redundant zip or the demo media we never use
+Resources/upstream.clickclack/switchtypes.zip
+Resources/upstream.clickclack/media/
