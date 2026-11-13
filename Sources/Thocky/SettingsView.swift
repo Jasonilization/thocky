@@ -1,14 +1,8 @@
 import SwiftUI
 
-/// Settings window delegate (the app delegate owns the NSWindow).
-protocol SettingsViewDelegate: AnyObject {
-    func settingsViewRequestsClose()
-}
-
-/// The settings window: tabs for pack, force/sensor, audio and general.
+/// The settings window: sound, force, audio, and general.
 struct SettingsView: View {
     @ObservedObject var state: AppState
-    weak var delegate: SettingsViewDelegate?
 
     var body: some View {
         TabView {
@@ -107,8 +101,9 @@ private struct ForceTab: View {
             VStack(alignment: .leading, spacing: 14) {
                 sensorCard
                 graphCard
-                calibrationCard
+                recentCard
                 sensitivityCard
+                calibrationCard
             }
             .padding(16)
         }
@@ -131,8 +126,7 @@ private struct ForceTab: View {
                                ok: state.audioLatency < 12,
                                symbol: "timer")
                 }
-                Text("Force is measured from the chassis vibration your keystrokes make in the MacBook's aluminium. " +
-                     "Sensitivity shifts the boundaries between soft, medium, hard and slam.")
+                Text("Force comes from the vibration a keystroke makes in the aluminium.")
                     .font(.callout).foregroundStyle(.secondary)
                 HStack {
                     Text("Noise floor: \(String(format: "%.4f", state.telemetry.noiseFloor)) g")
@@ -173,6 +167,54 @@ private struct ForceTab: View {
         }
     }
 
+    /// The last few keystrokes with what the app decided about each: the point
+    /// is that every sound you hear has an explanation you can check.
+    private var recentCard: some View {
+        GroupBox("Recent keystrokes") {
+            VStack(alignment: .leading, spacing: 3) {
+                if state.recentHits.isEmpty {
+                    Text("Type, and each keystroke shows up here with the force it measured.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    ForEach(state.recentHits.prefix(8)) { hit in
+                        HStack(spacing: 8) {
+                            Text(hit.label)
+                                .font(.caption.monospaced().bold())
+                                .frame(width: 64, alignment: .leading)
+                            Text(hit.tierLabel)
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(tierColor(hit.tier).opacity(0.22), in: Capsule())
+                                .foregroundStyle(tierColor(hit.tier))
+                                .frame(width: 58, alignment: .leading)
+                            Text(String(format: "score %.2f  peak %.3f g", hit.score, hit.peakG))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(hit.measured ? "measured" : "predicted")
+                                .font(.caption2)
+                                .foregroundStyle(hit.measured ? Color.green : Color.orange)
+                            Text(String(format: "pan %+.2f", hit.pan))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func tierColor(_ tier: Int) -> Color {
+        switch tier {
+        case 0: return Color(red: 0.35, green: 0.70, blue: 1.0)
+        case 1: return Color(red: 0.35, green: 0.90, blue: 0.65)
+        case 2: return Color(red: 1.0, green: 0.78, blue: 0.35)
+        default: return Color(red: 1.0, green: 0.42, blue: 0.42)
+        }
+    }
+
     private var sensitivityCard: some View {
         GroupBox("Sensitivity") {
             VStack(alignment: .leading, spacing: 8) {
@@ -201,7 +243,7 @@ private struct ForceTab: View {
                     Text("Type normally… samples: \(state.telemetry.calibrationSamples)")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Text(state.calibrationMessage ?? "Not calibrated. Use the defaults, or type for 8 seconds to teach Keystrike your touch.")
+                    Text(state.calibrationMessage ?? "Defaults are in use. Type for 8 seconds to match your touch.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 HStack {
@@ -310,11 +352,17 @@ private struct GeneralTab: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                GroupBox("Keystrike") {
+                GroupBox("Thocky") {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("Play keystroke sounds", isOn: Binding(
                             get: { state.isEnabled },
-                            set: { state.isEnabled ? ($0 ? nil : state.disable()) : state.enable() }))
+                            set: { enabled in
+                                if enabled { state.enable() } else { state.disable() }
+                            }))
+                        HStack(spacing: 12) {
+                            Button("Show keyboard") { state.presentKeyboard?() }
+                            Spacer()
+                        }
                         HStack(spacing: 12) {
                             StatusPill(title: KeyboardTap.hasPermission ? "Accessibility granted" : "Needs Accessibility",
                                        ok: KeyboardTap.hasPermission,
@@ -322,8 +370,18 @@ private struct GeneralTab: View {
                             Button("Open System Settings…") { KeyboardTap.openAccessibilitySettings() }
                             Button("Re-check") { state.ensureTap() }
                         }
-                        Text("Keystrike only reads key codes: it never sees or stores what you type. " +
-                             "Accessibility permission is how macOS lets an app observe key events at all.")
+                        if state.tapDeaf {
+                            /* the trap: macOS builds the tap and then throws the
+                               events away, so the app looks healthy and is silent */
+                            Text("macOS created the keyboard tap but is dropping every key event. " +
+                                 "The accelerometer is hearing your typing while the tap is not, " +
+                                 "which means Accessibility is granted to a different copy of Thocky. " +
+                                 "Open System Settings and toggle **every** Thocky entry on.")
+                                .font(.callout)
+                                .foregroundStyle(.red)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text("Thocky reads key codes only. It never sees or stores what you type.")
                             .font(.callout).foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 4)
@@ -334,8 +392,7 @@ private struct GeneralTab: View {
                         Toggle("Vary force when no accelerometer reading is available", isOn: Binding(
                             get: { state.fallbackForce },
                             set: { state.fallbackForce = $0; Settings.fallbackForce = $0 }))
-                        Text("With this on, machines without the SPU sensor still get soft-to-slam variation " +
-                             "estimated from typing rhythm. With it off, those keystrokes land on medium.")
+                        Text("Without the accelerometer, rhythm estimates soft through slam. Off keeps those keystrokes at medium.")
                             .font(.callout).foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 4)
@@ -357,7 +414,7 @@ private struct GeneralTab: View {
 
                 GroupBox("About") {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Keystrike 1.0").font(.headline)
+                        Text("Thocky 1.0").font(.headline)
                         Text("Force-sensitive mechanical keyboard sounds for Apple Silicon MacBooks.")
                             .font(.callout)
                         Text("Switch recordings: Mechvibes/ClickClack (MIT). Sound engine in C; " +
@@ -366,7 +423,7 @@ private struct GeneralTab: View {
                         HStack {
                             Button("Open log") {
                                 let url = FileManager.default.homeDirectoryForCurrentUser
-                                    .appendingPathComponent("Library/Logs/Keystrike")
+                                    .appendingPathComponent("Library/Logs/Thocky")
                                 NSWorkspace.shared.activateFileViewerSelecting([url])
                             }
                         }

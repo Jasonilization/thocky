@@ -7,16 +7,18 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var settingsWindow: NSWindow?
+    private var keyboardWindow: NSWindow?
     private let app = AppState()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        app.presentKeyboard = { [weak self] in self?.showKeyboard() }
         buildStatusItem()
-        Log.info("keystrike started (enabled=\(app.isEnabled), packs=\(app.packs.count))")
+        Log.info("thocky started (enabled=\(app.isEnabled), packs=\(app.packs.count))")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        Log.info("keystrike shutting down")
+        Log.info("thocky shutting down")
         app.shutDown()
         app.engine.shutdown()
     }
@@ -34,7 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateIcon() {
         guard let button = statusItem?.button else { return }
         let symbol = app.isEnabled ? "waveform" : "waveform.badge.exclamationmark"
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Keystrike")
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Thocky")
         button.contentTintColor = app.isEnabled ? nil : NSColor.secondaryLabelColor
     }
 
@@ -83,20 +85,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(volItem)
 
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Test sound…", action: #selector(testSound), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: app.isCalibrating ? "Calibrating…" : "Calibrate force sensor…",
-                                action: #selector(startCalibration), keyEquivalent: ""))
+        menu.addItem(menuItem("Test sound…", #selector(testSound(_:))))
+        menu.addItem(menuItem(app.isCalibrating ? "Calibrating…" : "Calibrate force sensor…",
+                              #selector(startCalibration)))
+        menu.addItem(menuItem("Show keyboard", #selector(showKeyboard), key: "k"))
         menu.addItem(.separator())
-        if !app.tapAuthorized {
-            let perm = NSMenuItem(title: "Grant Accessibility access…", action: #selector(requestAccessibility), keyEquivalent: "")
-            perm.target = self
-            menu.addItem(perm)
+        if app.tapDeaf {
+            let deaf = NSMenuItem(title: "⚠️ No key events: Accessibility is granted to a different Thocky — click here",
+                                  action: #selector(requestAccessibility), keyEquivalent: "")
+            deaf.attributedTitle = NSAttributedString(
+                string: deaf.title,
+                attributes: [.foregroundColor: NSColor.systemRed])
+            deaf.target = self
+            menu.addItem(deaf)
+        } else if !app.tapAuthorized {
+            menu.addItem(menuItem("Grant Accessibility access…", #selector(requestAccessibility)))
         }
-        menu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
-        menu.addItem(NSMenuItem(title: "Open log", action: #selector(openLog), keyEquivalent: ""))
+        menu.addItem(menuItem("Settings…", #selector(openSettings), key: ","))
+        menu.addItem(menuItem("Open log", #selector(openLog)))
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit Keystrike", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit Thocky", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
+    }
+
+    private func menuItem(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.target = self
+        return item
     }
 
     // MARK: actions
@@ -137,13 +152,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() {
         if settingsWindow == nil {
-            let view = SettingsView(state: app, delegate: self)
+            let view = SettingsView(state: app)
             let controller = NSHostingController(rootView: view)
             let window = NSWindow(contentViewController: controller)
-            window.title = "Keystrike"
-            window.styleMask = [.titled, .closable, .miniaturizable]
+            window.title = "Settings"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.isReleasedWhenClosed = false
-            window.setContentSize(NSSize(width: 680, height: 520))
+            window.setContentSize(NSSize(width: 720, height: 560))
+            window.minSize = NSSize(width: 640, height: 480)
             window.center()
             settingsWindow = window
         }
@@ -151,14 +167,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
-    func settingsViewRequestsClose() {
-        settingsWindow?.performClose(nil)
-        settingsWindow = nil
+    @objc private func showKeyboard() {
+        if keyboardWindow == nil {
+            let view = KeyboardView(state: app)
+            let controller = NSHostingController(rootView: view)
+            let window = NSWindow(contentViewController: controller)
+            window.title = "Keyboard"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.isMovableByWindowBackground = true
+            window.backgroundColor = NSColor(srgbRed: 0.07, green: 0.075, blue: 0.09, alpha: 1)
+            window.isReleasedWhenClosed = false
+            window.setContentSize(NSSize(width: 980, height: 560))
+            window.minSize = NSSize(width: 760, height: 460)
+            window.center()
+            keyboardWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        keyboardWindow?.makeKeyAndOrderFront(nil)
     }
 
     @objc private func openLog() {
         let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/Keystrike")
+            .appendingPathComponent("Library/Logs/Thocky")
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 }
@@ -166,8 +198,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) { rebuildMenu() }
 }
-
-extension AppDelegate: SettingsViewDelegate {}
 
 /// A volume slider row suitable for embedding in a menu.
 private final class VolumeRow: NSView {

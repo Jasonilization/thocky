@@ -168,44 +168,69 @@ final class ForceDetector {
 
     /// Correlate a keystroke at `when` with the sensor stream.
     ///
-    /// The chassis vibration starts slightly after the key event, so this waits a
-    /// few milliseconds for the impact to develop instead of guessing from the
-    /// first sample. Returns nil when nothing is attributable to this keystroke.
+    /// The event tap and the accelerometer don't agree on timing: the vibration
+    /// can already be in flight when the key event arrives, or it can show up a
+    /// few milliseconds later. Impacts are scored from their live peak, not only
+    /// after they have closed — a strike takes tens of milliseconds to decay, and
+    /// waiting for that made every keystroke miss the reading and fall back to a
+    /// rhythm guess.
+    ///
+    /// Returns nil when the sensor is quiet or nothing lines up with this key.
     func reading(at when: UInt64) -> Reading? {
-        let gateDeadlineMs = 6.0
-        var best: Impact?
+        lock.lock()
+        let sensorLive = lastSampleTime != 0 && machSignedIntervalMs(lastSampleTime, machNow()) < 80
+        lock.unlock()
+        guard sensorLive else { return nil }
 
-        let deadline = machIntervalMs(when, machNow()) + gateDeadlineMs
+        let giveUp = machNow() &+ ticks(forMs: 12)
+        let lead = 18.0   /* impact may have started this long before the event */
+        let lag = 12.0    /* …or this long after it */
+
         while true {
+            let now = machNow()
+            let final = now >= giveUp
             lock.lock()
-            if let candidate = impacts.first(where: { imp in
-                !imp.consumed && machIntervalMs(imp.start, when) > -4.0
-                    && machIntervalMs(imp.start, when) < deadline
-            }) {
-                best = candidate
-            }
+            let found = matchLocked(when: when, now: now, lead: lead, lag: lag, commit: final)
             lock.unlock()
-
-            if best != nil {
-                /* give the impact a moment to reach its true peak */
-                usleep(800)
-                lock.lock()
-                var fresh: Impact?
-                if let best { fresh = impacts.first(where: { $0.start == best.start }) }
-                if let fresh {
-                    if let idx = impacts.firstIndex(where: { $0.start == fresh.start }) {
-                        impacts[idx].consumed = true
-                    }
-                }
-                lock.unlock()
-                if let fresh {
-                    return Reading(score: fresh.score, impact: fresh, fromSensor: true)
-                }
-            }
-
-            if machIntervalMs(when, machNow()) >= deadline { return nil }
-            usleep(250)
+            if let found { return found }
+            if final { return nil }
+            usleep(400)
         }
+    }
+
+    /// Caller holds `lock`. Returns a reading when the matching strike is ready
+    /// to score, or nil to keep waiting. `commit` forces a decision.
+    private func matchLocked(when: UInt64, now: UInt64, lead: Double, lag: Double, commit: Bool) -> Reading? {
+        func near(_ start: UInt64) -> Bool {
+            let delta = machSignedIntervalMs(when, start)
+            return delta >= -lead && delta <= lag
+        }
+
+        if var live = tracking, !live.consumed, near(live.start) {
+            let age = machSignedIntervalMs(live.start, now)
+            let falling = lastMagnitude < live.peak * 0.72 && age > 3.5
+            guard commit || falling || age >= 7 else { return nil }
+            live.score = score(forPeak: live.peak)
+            live.consumed = true
+            tracking = live
+            return Reading(score: live.score, impact: live, fromSensor: true)
+        }
+
+        var best: Int?
+        var bestAbs = Double.greatestFiniteMagnitude
+        for (index, impact) in impacts.enumerated() where !impact.consumed && near(impact.start) {
+            let distance = abs(machSignedIntervalMs(when, impact.start))
+            if distance < bestAbs {
+                bestAbs = distance
+                best = index
+            }
+        }
+        if let best {
+            impacts[best].consumed = true
+            let impact = impacts[best]
+            return Reading(score: impact.score, impact: impact, fromSensor: true)
+        }
+        return nil
     }
 
     private func machNow() -> UInt64 { UInt64(mach_absolute_time()) }
@@ -242,7 +267,7 @@ final class ForceDetector {
         lock.lock()
         calibrationSamples.removeAll(keepingCapacity: true)
         calibrationStart = machNow()
-        calibrating = calibrationSamples.isEmpty
+        calibrating = true
         lock.unlock()
     }
 

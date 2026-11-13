@@ -1,4 +1,4 @@
-# Keystrike - force-sensitive mechanical keyboard sounds for Apple Silicon MacBooks.
+# Thocky - force-sensitive mechanical keyboard sounds for Apple Silicon MacBooks.
 #
 #   make app        build the .app bundle you can run
 #   make run        build + open it
@@ -10,7 +10,7 @@
 ROOT := $(CURDIR)
 CONFIG ?= debug
 BUILD := $(ROOT)/.build/$(CONFIG)
-APP := $(ROOT)/.build/app/$(CONFIG)/Keystrike.app
+APP := $(ROOT)/.build/app/$(CONFIG)/Thocky.app
 
 .PHONY: all build app dmg run packs test-audio test-offline clean sign
 

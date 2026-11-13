@@ -11,7 +11,7 @@ struct PackInfo: Identifiable, Hashable {
     static let builtinOrder = ["cream", "holypanda", "blackink", "topre", "mxblue"]
 
     /// Where the packs live: the app bundle first, then dev-tree fallbacks so
-    /// `swift run keystrike` works without building a bundle.
+    /// `swift run thocky` works without building a bundle.
     static func searchRoots() -> [URL] {
         var roots: [URL] = []
 
@@ -21,7 +21,7 @@ struct PackInfo: Identifiable, Hashable {
         if let res = Bundle.main.resourceURL {
             roots.append(res.appendingPathComponent("Packs", isDirectory: true))
         }
-        // <repo>/.build/.../keystrike -> <repo>/Resources/Packs
+        // <repo>/.build/.../thocky -> <repo>/Resources/Packs
         let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
         for up in 1...5 {
             var url = exe

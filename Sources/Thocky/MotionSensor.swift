@@ -147,3 +147,11 @@ func machIntervalMs(_ from: UInt64, _ to: UInt64) -> Double {
     guard to >= from else { return 0 }
     return machMs(to - from)
 }
+
+/// Signed milliseconds from `from` to `to`. Negative when `to` is earlier.
+/// `machIntervalMs` collapses that case to zero, which made the force matcher
+/// treat "impact has not started yet" as "impact started this instant".
+func machSignedIntervalMs(_ from: UInt64, _ to: UInt64) -> Double {
+    if to >= from { return machMs(to &- from) }
+    return -machMs(from &- to)
+}

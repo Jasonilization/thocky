@@ -1,5 +1,5 @@
 #!/bin/bash
-# Assemble Keystrike.app from `swift build`.
+# Assemble Thocky.app from `swift build`.
 #
 #   scripts/build_app.sh [debug|release]
 #
@@ -22,15 +22,15 @@ echo "[build] swift build -c $configuration"
 swift build -c "$configuration" 2>&1 | tail -5
 
 products="$root/.build/app/$configuration"
-executable="$root/.build/$configuration/keystrike"
+executable="$root/.build/$configuration/thocky"
 [[ -x "$executable" ]] || { echo "[build] missing executable: $executable" >&2; exit 1; }
 
-app="$products/Keystrike.app"
+app="$products/Thocky.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 
 # C targets are linked statically, so nothing from .build/ needs shipping.
-cp "$executable" "$app/Contents/MacOS/Keystrike"
+cp "$executable" "$app/Contents/MacOS/Thocky"
 cp -R "$root/Resources/Packs" "$app/Contents/Resources/Packs"
 
 cat > "$app/Contents/Info.plist" <<'PLIST'
@@ -41,15 +41,15 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>Keystrike</string>
+	<string>Thocky</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.keystrike.app</string>
+	<string>com.thocky.app</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Keystrike</string>
+	<string>Thocky</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -68,13 +68,35 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+if [[ ! -f "$root/Resources/AppIcon.icns" ]]; then
+    swift "$root/scripts/render_branding.swift" "$root"
+fi
 if [[ -f "$root/Resources/AppIcon.icns" ]]; then
     cp "$root/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 fi
 
-codesign --force --sign - \
-    --identifier com.keystrike.app \
-    --entitlements "$root/Resources/Keystrike.entitlements" \
-    "$app" 2>&1 | sed 's/^/[codesign] /' || true
+# Prefer a real (local development) signing identity over ad-hoc: with an
+# identity, macOS keeps the user's Accessibility grant when you rebuild, because
+# the grant follows the signing certificate instead of the binary's hash. Ad-hoc
+# signing changes that hash on every build, which is why Accessibility had to be
+# re-granted by hand.
+SIGN_ID="${THOCKY_SIGN_ID:-}"
+if [[ -z "$SIGN_ID" ]]; then
+    SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null \
+              | grep -o '[0-9A-F]\{40\}' | head -1 || true)
+fi
+if [[ -n "$SIGN_ID" ]] && security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
+    echo "[codesign] identity $SIGN_ID"
+    codesign --force --sign "$SIGN_ID" \
+        --identifier com.thocky.app \
+        --entitlements "$root/Resources/Thocky.entitlements" \
+        "$app" 2>&1 | sed 's/^/[codesign] /' || true
+else
+    echo "[codesign] ad-hoc (no codesigning identity found; set THOCKY_SIGN_ID for stable Accessibility grants)"
+    codesign --force --sign - \
+        --identifier com.thocky.app \
+        --entitlements "$root/Resources/Thocky.entitlements" \
+        "$app" 2>&1 | sed 's/^/[codesign] /' || true
+fi
 
 echo "[build] $app"

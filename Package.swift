@@ -2,10 +2,10 @@
 import PackageDescription
 
 let package = Package(
-    name: "keystrike",
+    name: "thocky",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "keystrike", targets: ["keystrike"])
+        .executable(name: "thocky", targets: ["thocky"])
     ],
     targets: [
         // Native Core Audio engine (C). Pre-loaded RAM buffers + real-time mixer.
@@ -29,9 +29,9 @@ let package = Package(
         ),
         // Swift menu-bar app.
         .executableTarget(
-            name: "keystrike",
+            name: "thocky",
             dependencies: ["ThockAudio", "ThockSPU"],
-            path: "Sources/keystrike"
+            path: "Sources/Thocky"
         )
     ]
 )

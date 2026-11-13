@@ -9,8 +9,6 @@ struct ActivityGraph: View {
     let noiseFloor: Double
     let impacts: [Double]
 
-    private let targetWidth = 320.0
-
     var body: some View {
         Canvas { context, size in
             guard history.count > 1 else {

@@ -1,181 +1,166 @@
-# Keystrike
+# Thocky
 
-Mechanical keyboard sounds for your MacBook, chosen by how hard you actually type.
+<p align="center">
+  <img src="showcase/icon.png" alt="Thocky icon: a single keycap with an amber level mark" width="160">
+</p>
 
-Keystrike listens to the MacBook's built-in accelerometer, reads the chassis
-vibration each keystroke makes in the aluminium, and picks the matching sound:
-a brushed key stays soft, a real press sits in the middle, a slammed key lands
-on the slam tier - continuously crossfaded, not stepped.
+<h3 align="center">Mechanical keyboard sounds for your MacBook — picked by how hard you actually type.</h3>
 
-It is an open-source take on apps like Haptyk and Thock, built end-to-end:
-a real-time C audio engine, force sensing from the laptop's own sensor, and
-16 switch packs.
+<p align="center">
+  <a href="https://github.com/Jasonilization/thocky/releases"><img src="https://img.shields.io/badge/platform-macOS%2013%2B-333333?style=flat-square&logo=apple&logoColor=white" alt="macOS 13+"></a>
+  <img src="https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M5-555555?style=flat-square" alt="Apple Silicon">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-000000?style=flat-square" alt="MIT"></a>
+  <img src="https://img.shields.io/badge/price-free-34C759?style=flat-square" alt="Free">
+</p>
+
+---
+
+Thocky listens to the accelerometer inside your MacBook's chassis. A light tap stays quiet, a normal press sits in the middle, and a slammed key lands on the slam tier. The mix is continuous, so a slightly harder press never flips from one sample to another. No account, no network, no telemetry. It reads key codes, never characters.
 
 ```
-keystroke ──▶ SPU accelerometer ──▶ force 0..1 ──▶ tier crossfade ──▶ clip
-              chassis vibration      gravity-removed              48 kHz RAM
-                                     adaptive noise floor         voice mixer
+keystroke ──► event tap ─────────────► which key, and where it sits
+     │
+     └──► SPU accelerometer
+              │  gravity removed, noise floor, impact peak
+              ▼
+          force 0…1 ──► crossfade the two nearest tiers
+              │
+              ▼
+          clip ──► voice ──► pan by key position ──► speakers
 ```
 
-## What is verified
+## What it does
 
-Everything below was run on a MacBook Air (M5, macOS 27.2, Swift 6.4.2):
+- **Force-sensitive sound** — reads the built-in SPU accelerometer at ~800 Hz through IOKit (no root, no kernel extension) and scores every keystroke from its real impact peak.
+- **Continuous crossfade** — force is a 0…1 value across four tiers; the mixer blends the two nearest clips instead of stepping between them.
+- **Positional audio** — equal-power pan by key position, a sub-millisecond lead to the near ear, and a touch less level for the back row.
+- **Live keyboard view** — **Show keyboard** draws your MacBook deck; the key you hit lights and sinks by how hard the sensor measured it, tinted from blue (soft) to red (slam). Guesses stay grey.
+- **16 sound packs** — Cherry MX, Alps, Topre, Holy Pandas, Ink, Cream, a buckling spring, plus synthesised scissor, membrane and typewriter.
+- **Calibration** — 8 seconds of normal typing sets soft and slam for your desk and your hands.
+- **Graceful fallback** — no sensor, or a macOS update broke it? Thocky still plays, estimating force from typing rhythm.
+- **Real-time C audio engine** — one Core Audio output unit, clips in RAM, a lock-free trigger ring, a fixed voice pool, round-robin takes, and an idle pause after three minutes of silence.
+- **Menu bar only** — a waveform icon, no Dock icon.
 
-| Check | Result |
+## Screenshots
+
+<p align="center">
+  <img src="showcase/dmg-window.png" alt="The Thocky disk image window: drag Thocky onto Applications" width="680">
+</p>
+<p align="center"><em>The installer. Open the disk image and drag Thocky onto Applications.</em></p>
+
+<p align="center">
+  <img src="showcase/icon-sizes.png" alt="The Thocky icon from 180pt down to 16pt" width="680">
+</p>
+<p align="center"><em>The icon at every size macOS draws it, down to the 16pt menu.</em></p>
+
+## 📦 Requirements
+
+| | |
 |---|---|
-| `AppleSPUHIDDevice` access without root | opens, streams at **805 Hz** |
-| Core Audio negotiation | **48 kHz / 128 frames / 2.67 ms** round trip |
-| Pack loading | 16 packs, 892 clips, `cream` = 48 clips |
-| Offline render (`make test-offline`) | 6 s stereo WAV, peak 0.818, 17/17 voices, 0 drops |
-| Live render + mixing | **2150 render callbacks, 86 voices, 0 dropped** over a scripted stream |
-| Force mapping (`KS_FORCE_TEST=1`) | 5/5 synthetic bursts detected, peaks matched to 3 %, scores monotonic soft → slam |
+| **OS** | macOS 13 (Ventura) or newer |
+| **Hardware** | Apple Silicon MacBook (tested on an M5 MacBook Air) — the accelerometer is optional |
+| **Build** | Swift toolchain — Command Line Tools are enough, no Xcode required |
+| **Perms** | Accessibility (to observe key events) |
 
-Not yet verified end-to-end: keystrokes from the event tap driving all of the
-above, because granting Accessibility permission needs a human (see
-[Permissions](#permissions)). Everything on either side of that tap is tested.
+## 🚀 Installation
 
-## Build and run
-
-```sh
-make app      # swift build + Keystrike.app (ad-hoc signed, no Xcode needed)
-make run      # build and open it
-make dmg      # a drag-to-install Keystrike.dmg (release by default)
+```bash
+git clone https://github.com/Jasonilization/thocky.git
+cd thocky
+make dmg     # → .build/dmg/Thocky-1.0.dmg
+open .build/dmg/Thocky-1.0.dmg
 ```
 
-The bundle is assembled under `.build/app/<configuration>/Keystrike.app`
-rather than in SwiftPM's product directory, so a later `swift build` will not
-wipe it. Keystrike is a menu-bar agent: no Dock icon, click the waveform icon
-for the menu, or `Settings…` for pack, force, audio and general panes.
+Drag **Thocky** onto **Applications**. First launch: right-click → **Open** (the app is signed with a local certificate, not notarized), then grant Accessibility when asked.
 
-```sh
-make test-offline   # render a WAV through the engine with no output device
-make packs          # rebuild all 16 packs from the upstream recordings
+## 🎚️ How it works
+
+**Sensing.** `AppleSPUHIDDevice` reports accelerometer samples at about 800 Hz. Thocky opens it through IOKit (`Sources/ThockSPU`) and reads three int32 Q16 values per report. Samples are stamped with `mach_absolute_time()` in process, so key events and chassis vibration share one clock.
+
+**Force.** `Sources/Thocky/ForceDetector.swift` removes gravity with a slow per-axis average (frozen while a strike is in flight), tracks a noise floor that falls quickly on a quiet desk and rises slowly when the machine is handled, then gates impacts and holds the peak. The event tap can run a few milliseconds ahead of or behind the vibration, so the matcher looks both ways instead of waiting for the strike to decay. Tier boundaries sit at 0.25, 0.5 and 0.75.
+
+**Calibration.** **Calibrate force sensor…** asks you to type normally for 8 seconds and takes the 35th and 92nd percentile of those peaks. Until then: soft at or below 7.5 mg, slam at or above 140 mg.
+
+**Keyboard.** `Sources/Thocky/KeyLayout.swift` is one US MacBook layout with real key widths — tab, return, shift and space are the wide caps they are in aluminium — shared by the panner and the window. Each cap lights with the force of the last press: brighter as the measured peak climbs, coloured by tier from blue (soft) to red (slam), and it sinks a little while the press is in flight. A keystroke with no sensor reading lights grey, so an estimated force never looks like a measured one.
+
+Checked on a MacBook Air (M5, macOS 27.2): the SPU stream opens without root at about 805 Hz, Core Audio settles at 48 kHz / 128 frames, and the offline render plays every voice with nothing dropped.
+
+## 🎹 Sound packs
+
+alpaca · blackink · bluealps · boxnavy · buckling · cream · holypanda · membrane · mxblack · mxblue · mxbrown · redink · scissor · topre · turquoise · typewriter
+
+Each pack has four key groups (generic, return, space, backspace), press and release, and four force tiers, with up to five takes per slot. Built from the MIT-licensed [Mechvibes/ClickClack](https://github.com/cesarferreira/clickclack) recordings; scissor, membrane and typewriter are synthesised. Regenerate with `make packs`.
+
+## 🔒 Privacy & permissions
+
+**Accessibility** is required to observe key events. Every keystroke-sound app on macOS needs it, which is why this kind of app ships outside the App Store. Thocky asks on first launch; you can also use **Grant Accessibility access…** in the menu, or System Settings → Privacy & Security → Accessibility.
+
+- Thocky reads **key codes only** — it never sees characters and never stores what you type.
+- The tap is **listen-only**, so a slow sensor read can never hold your keys back.
+- **No network code.** Nothing leaves your Mac.
+
+The accelerometer needs no permission. It is a private interface, so a macOS update can break it — when that happens, Thocky falls back to rhythm-based force.
+
+## 🛠️ Development
+
+Pure SwiftPM — no Xcode project:
+
+```bash
+make app            # Thocky.app, signed with a local codesigning identity
+make run            # build and open it
+make dmg            # drag-to-install disk image
+make test-offline   # mix a WAV through the engine, no output device
+make packs          # rebuild the 16 packs (needs numpy)
 make clean
 ```
 
-`make dmg` produces `.build/dmg/Keystrike-<version>.dmg`: the `.app` plus an
-`Applications` symlink, verified by mounting it back after writing. Nothing
-in the DMG is signed beyond the app's ad-hoc signature, so the first run needs
-a right-click → Open, then the Accessibility grant below.
-Environment variables (useful for CI and headless checks):
+The bundle lands in `.build/app/<configuration>/Thocky.app`, outside SwiftPM's product directory, so a later `swift build` doesn't delete it.
 
 | Variable | Effect |
 |---|---|
-| `KS_FORCE_TEST=1` | feed synthetic keystrokes through the detector, log the scores |
-| `KS_SELFTEST=1` | play a scripted 4 s stream, report render/voice counts |
-| `THOCK_DEBUG=1` | verbose Core Audio logging (stderr) |
+| `KS_FORCE_TEST=1` | synthetic impacts through the force detector |
+| `KS_SELFTEST=1` | scripted playback, then render and voice counts |
+| `THOCK_DEBUG=1` | verbose Core Audio logging |
 | `KS_PACKS=…` | override the pack directory |
+| `THOCKY_SIGN_ID=…` | codesign identity, so Accessibility survives a rebuild |
 
-Logs land in `~/Library/Logs/Keystrike/keystrike.log`.
-
-## How it works
-
-**Sensing.** The MacBook has an undocumented HID device, `AppleSPUHIDDevice`,
-that reports accelerometer samples at ~1 kHz. Keystrike opens it through IOKit
-(`Sources/ThockSPU`, no root, no kernel extension) and reads three int32 Q16
-values per report. Samples are stamped with `mach_absolute_time()` in-process,
-so key events and chassis vibrations share one clock.
-
-**Force.** `Sources/keystrike/ForceDetector.swift`:
-
-1. removes gravity with a slow per-axis EMA (frozen while an impact is in
-   flight, so a strike does not drag the resting point with it);
-2. tracks an adaptive noise floor that falls fast on a quiet desk and rises
-   slowly when the laptop is being handled;
-3. gates impacts with a threshold combining that floor and the sensitivity
-   control, holds the peak for ~90 ms, and applies a refractory period so one
-   strike is scored once;
-4. correlates the onset with the keystroke timestamp, waiting a few
-   milliseconds for the vibration to reach its peak rather than guessing from
-   the first sample.
-
-Force is a continuous 0…1 value, mapped onto soft/medium/hard/slam with
-boundaries at 0.25/0.5/0.75 and a crossfade between neighbouring tiers in the
-mixer, so pressing a bit harder never sounds like a switch was flipped.
-
-**Calibration.** "Soft" and "slam" are different on every desk and every pair
-of hands, so `Calibrate force sensor…` asks you to type normally for 8 s and
-takes the 35th and 92nd percentile of your impact peaks as the two endpoints.
-Until then the defaults (soft ≤ 7.5 mg, slam ≥ 140 mg) apply.
-
-**Sound.** `Sources/ThockAudio` is a Core Audio engine in C: one AudioUnit at a
-128-frame buffer, all clips pre-decoded into RAM, a lock-free ring of triggers
-feeding a fixed voice pool with per-voice gain ramps, round-robin variant
-selection so repeated presses never sound identical, and an idle pause after
-three minutes of silence so the machine can sleep normally.
-
-**Layout.**
+Logs: `~/Library/Logs/Thocky/thocky.log`.
 
 ```
-Sources/ThockAudio/   C audio engine + pack cache + WAV reader
-Sources/ThockSPU/     C bridge to the undocumented SPU accelerometer
-Sources/keystrike/    Swift app: sensor, force, keys, menu, settings UI
-Tools/                generate_packs.py, engine_test.c
-scripts/              build_app.sh, build_packs.sh
-Resources/Packs/      16 packs × 4 key groups × press/release × 4 tiers
-Resources/upstream.clickclack/  the MIT recordings the packs are built from
+Sources/
+├── ThockAudio/     C audio engine, pack cache, WAV reader
+├── ThockSPU/       C bridge to the SPU accelerometer
+└── Thocky/         Swift app: sensor, force, keys, menu, keyboard
+Tools/              generate_packs.py, engine_test.c
+scripts/            build_app.sh, build_dmg.sh, build_packs.sh, render_branding.swift
+Resources/Packs/    16 packs
 ```
 
-## Permissions
+## 🧯 Troubleshooting
 
-**Accessibility** is needed to observe key events. This is not optional: every
-keystroke-feedback app on macOS needs it, and it is why apps like this one can
-only be distributed outside the App Store. Keystrike asks on first launch, or
-use `Grant Accessibility access…` in the menu, or toggle it in
-`System Settings → Privacy & Security → Accessibility`.
+**No sound, and `say hello` hangs.** Something else is sitting on the output device. System-wide EQ apps can leave it wedged after they quit. Quit or reinstall them, then `sudo killall coreaudiod` (launchd restarts it). The log heartbeat reports `renders=0` when the engine is up but the audio server isn't pulling.
 
-Keystrike only ever reads key codes: it never sees or stores what you type,
-never modifies your keystrokes, and nothing leaves the machine.
+**The render count is climbing, but typing is silent.** The event tap wasn't created, or it was created and macOS is dropping its events. Grant Accessibility and hit **Re-check** in Settings. `make test-offline` and `KS_FORCE_TEST=1` bypass the tap.
 
-The accelerometer needs no permission at all - it is plain IOKit - but it does
-use a private interface. That means:
+**macOS says the tap exists but nothing works.** macOS creates an event tap for an untrusted process and then discards every event in silence, so the app looks healthy and hears nothing. The heartbeat reports `tap=1 trust=0` when this happens, and the menu turns red with `⚠️ No key events: Accessibility is granted to a different Thocky`. The grant is per code identity, so rebuilding the app or running it from a different path needs a fresh toggle: open System Settings → Privacy & Security → Accessibility and switch **every** Thocky entry on. Signing with a local certificate (`THOCKY_SIGN_ID`, the default when one exists) keeps a grant alive across rebuilds; ad-hoc signing does not, because ad-hoc rebuilds change the binary's hash and TCC follows the hash.
 
-- it can break in any macOS update, silently or loudly (the log will say
-  `no SPU accelerometer`);
-- when it breaks, or on a MacBook without the sensor, Keystrike still plays
-  sound, estimating force from typing rhythm unless you turn that off.
+## 🗺️ Roadmap
 
-Neither of these is acceptable for Mac App Store distribution; ad-hoc signing
-with `scripts/build_app.sh` is the supported path.
+- [x] Real-time C audio engine
+- [x] Accelerometer force sensing + calibration
+- [x] Positional stereo
+- [x] Live 2D keyboard view
+- [x] 16 sound packs
+- [x] Drag-to-install DMG
+- [ ] Notarized release builds
+- [ ] More keyboard layouts (ISO, JIS)
 
-## Sound packs
+No timelines. It ships when it ships.
 
-16 packs, 892 clips, built from the MIT-licensed
-[Mechvibes/ClickClack](https://github.com/cesarferreira/clickclack) recordings
-(`Resources/upstream.clickclack/CLICKCLACK-LICENSE`):
+## 🙏 Credits
 
-alpaca, blackink, bluealps, boxnavy, buckling, cream, holypanda, membrane,
-mxblack, mxblue, mxbrown, redink, scissor, topre, turquoise, typewriter.
+Switch recordings: [Mechvibes/ClickClack](https://github.com/cesarferreira/clickclack), MIT (Tiago Ferreira). The force path follows the same idea as Thock and Haptyk, implemented here against the raw HID reports. SwiftPM, AppKit, SwiftUI and Core Audio — no third-party dependencies.
 
-Each pack holds four key groups (generic, return, space, backspace) ×
-press/release × four force tiers, with up to five recordings per slot.
-Three packs (scissor, membrane, typewriter) are synthesised, because no
-upstream recording exists for a MacBook scissor switch or a rubber dome.
-Regenerate with `make packs` (needs `numpy`).
+## 📜 License
 
-## Troubleshooting
-
-**No sound at all, and even `say hello` hangs.** Something else is holding the
-audio device. System-wide EQ apps (FineTune and friends) install themselves
-into the output path and can leave it wedged after they quit; the fix is to
-quit or reinstall them, then `sudo killall coreaudiod` (launchd restarts it).
-`log stream --predicate 'process == "coreaudiod"'` will point at the client.
-Keystrike's heartbeat in `~/Library/Logs/Keystrike/keystrike.log` reports
-`renders=0` when the engine is healthy but the HAL is not pulling.
-
-**No per-key sound, but the heartbeat shows renders climbing.** The event tap
-was not created: grant Accessibility and use `Re-check` in the settings.
-`make test-offline` and `KS_FORCE_TEST=1` bypass the tap entirely and are the
-right tools when the tap is the problem.
-
-## Credits
-
-- Switch recordings: [Mechvibes/ClickClack](https://github.com/cesarferreira/clickclack), MIT (Tiago Ferreira).
-- Force sensing follows the same idea as Thock/Haptyk, but is implemented here
-  from scratch against the raw HID reports.
-- Built with SwiftPM, AppKit, SwiftUI and Core Audio; no third-party
-  dependencies.
-
-## License
-
-MIT, see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).

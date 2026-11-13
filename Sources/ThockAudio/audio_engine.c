@@ -36,6 +36,8 @@ typedef struct {
     float        gain;
     float        gain_target;
     float        gain_step;
+    float        pan;          /* -1 = full left, +1 = full right */
+    float        dist;         /* 0 = nearest, 1 = furthest */
     int          active;
 } ks_voice_t;
 
@@ -46,6 +48,8 @@ typedef struct {
     float mix;
     int   event;
     float gain;
+    float pan;
+    float dist;
 } ks_trigger_t;
 
 static struct {
@@ -97,6 +101,17 @@ static void ks_spawn_voice(const ks_trigger_t *t);
 const char *ks_audio_error(void) { return g_error; }
 
 static long long now_ms(void) { return (long long)(CFAbsoluteTimeGetCurrent() * 1000.0); }
+
+/* Linear sample at a source position. Positions before the clip (the late
+   ear, in the first fraction of a millisecond) are silence. */
+static float ks_sample_at(const float *src, unsigned int len, double pos) {
+    if (pos < 0.0 || len == 0) return 0.0f;
+    if (pos >= (double)len) return 0.0f;
+    const unsigned int i0 = (unsigned int)pos;
+    if (i0 + 1 >= len) return src[len - 1];
+    const float frac = (float)(pos - (double)i0);
+    return src[i0] * (1.0f - frac) + src[i0 + 1] * frac;
+}
 
 /* deterministic-ish jitter for playback (no locks, no syscalls) */
 static float ks_jitter(float spread) {
@@ -298,6 +313,20 @@ static void ks_mix(float *out, UInt32 frames, int ch) {
             const float gtarget = vc->gain_target;
             const float gstep = vc->gain_step;
 
+            /* Equal-power pan, plus a short interaural delay. A key on the left
+               reaches the left ear first, so the right channel reads an earlier
+               point in the clip. Doing the delay in source position (instead of
+               shifting the output index) keeps the late samples inside this
+               buffer instead of dropping them on the floor at the buffer end. */
+            const float p = vc->pan;
+            const float ang = (p + 1.0f) * (float)M_PI_4;
+            const float pl = cosf(ang), pr = sinf(ang);
+            const float dfall = 1.0f - 0.4f * vc->dist;   /* back rows are quieter */
+            const double rate = g.sample_rate > 0.0 ? g.sample_rate : 48000.0;
+            const int itd_max = (int)(rate * 0.00045);     /* 0.45 ms of ear delay */
+            const int itd = (int)(fabsf(p) * (float)itd_max + 0.5f);
+            const double lag = (double)itd * vc->step;
+
             for (UInt32 n = 0; n < frames; n++) {
                 if (pos >= (double)len) break;
                 if (gain != gtarget) {
@@ -305,15 +334,17 @@ static void ks_mix(float *out, UInt32 frames, int ch) {
                     if ((gstep > 0.0f && gain > gtarget) ||
                         (gstep < 0.0f && gain < gtarget)) gain = gtarget;
                 }
-                const unsigned int i0 = (unsigned int)pos;
-                const double frac = pos - (double)i0;
-                float s;
-                if (i0 + 1 < len) s = src[i0] * (float)(1.0 - frac) + src[i0 + 1] * (float)frac;
-                else              s = src[len - 1];
-
-                const float x = s * gain * g.master;
-                out[n * ch] += x;
-                if (ch > 1) out[n * ch + 1] += x;
+                const float sNow = ks_sample_at(src, len, pos);
+                const float sLate = (itd > 0) ? ks_sample_at(src, len, pos - lag) : sNow;
+                const float sl = (p > 0.0f) ? sLate : sNow;   /* right key: left ear is late */
+                const float sr = (p < 0.0f) ? sLate : sNow;   /* left key: right ear is late */
+                const float gnow = gain * g.master * dfall;
+                if (ch > 1) {
+                    out[n * (UInt32)ch]     += sl * gnow * pl;
+                    out[n * (UInt32)ch + 1] += sr * gnow * pr;
+                } else {
+                    out[n] += sNow * gnow;
+                }
                 pos += vc->step;
             }
 
@@ -432,7 +463,7 @@ static float ks_tier_pitch(int tier) {
 }
 
 static void ks_start_voice(const float *data, unsigned int frames, double src_rate,
-                           float pitch, float gain) {
+                           float pitch, float gain, float pan, float dist) {
     if (!data || frames == 0) return;
     int idx = -1;
     for (int i = 0; i < KS_MAX_VOICES; i++) {
@@ -452,6 +483,8 @@ static void ks_start_voice(const float *data, unsigned int frames, double src_ra
     vc->gain_target = gain;
     const float fade = (float)KS_FADE_FRAMES;
     vc->gain_step = (gain > 0.0f) ? (gain / fade) : 0.0f;
+    vc->pan = pan;
+    vc->dist = dist;
     vc->active = 1;
     g.voices_started++;
 }
@@ -482,11 +515,11 @@ static void ks_spawn_voice(const ks_trigger_t *t) {
         const float gain = (tier_lo == tier_hi)
             ? t->gain * j
             : t->gain * (1.0f - mix) * 0.85f * j;
-        ks_start_voice(d_lo, f_lo, r_lo, pitch_lo, gain);
+        ks_start_voice(d_lo, f_lo, r_lo, pitch_lo, gain, t->pan, t->dist);
     }
     if (d_hi && tier_lo != tier_hi) {
         const float gain = t->gain * mix * 0.85f * j;
-        ks_start_voice(d_hi, f_hi, r_hi, pitch_hi, gain);
+        ks_start_voice(d_hi, f_hi, r_hi, pitch_hi, gain, t->pan, t->dist);
     }
 }
 
@@ -504,7 +537,7 @@ static void ks_drain_triggers(void) {
 }
 
 void ks_play(const ks_pack_t *pack, int group, int tier_lo, int tier_hi,
-             float mix, int event, float gain) {
+             float mix, int event, float gain, float pan, float dist) {
     if (!pack) return;
     if (!g.ready) return;
     if (!g.started) ks_audio_idle_resume();
@@ -525,6 +558,8 @@ void ks_play(const ks_pack_t *pack, int group, int tier_lo, int tier_hi,
         slot->mix = mix;
         slot->event = event;
         slot->gain = gain;
+        slot->pan = (pan < -1.0f) ? -1.0f : (pan > 1.0f ? 1.0f : pan);
+        slot->dist = (dist < 0.0f) ? 0.0f : (dist > 1.0f ? 1.0f : dist);
         atomic_store_explicit(&g.ring_head, head + 1, memory_order_release);
     }
     pthread_mutex_unlock(&g.ring_lock);

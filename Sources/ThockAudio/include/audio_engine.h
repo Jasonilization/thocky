@@ -62,8 +62,15 @@ void        ks_pack_cache_set_limit(int packs); /* keep at most N packs resident
 void        ks_pack_cache_clear(void);
 
 /* ---- playback ---- */
+/* Play one keystroke clip.
+ *
+ * pan is -1 (full left) .. +1 (full right): equal-power placement, plus a
+ * fraction of a millisecond of interaural delay so a left-hand key reaches
+ * the left ear first.
+ * dist is 0 (front row) .. 1 (back row): further keys are a little quieter.
+ */
 void ks_play(const ks_pack_t *pack, int group, int tier_lo, int tier_hi,
-             float mix, int event, float gain);
+             float mix, int event, float gain, float pan, float dist);
 void ks_audio_render_into(float *out, unsigned int frames);  /* offline render (tests) */
 
 #ifdef __cplusplus

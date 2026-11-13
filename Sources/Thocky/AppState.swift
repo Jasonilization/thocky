@@ -13,6 +13,48 @@ import ThockAudio
 final class AppState: ObservableObject {
     static let tierLabels = ["Soft", "Medium", "Hard", "Slam"]
 
+    /// One keystroke as the app experienced it: what force it measured, which
+    /// tier that landed on, and where the key sits. The visualiser and the
+    /// recent-keystroke list both read this.
+    struct KeyHit: Identifiable {
+        var id = UUID()
+        var keyCode: CGKeyCode
+        var label: String
+        var group: Int
+        var tier: Int
+        var score: Double
+        var peakG: Double
+        var pan: Float
+        var dist: Float
+        var measured: Bool
+        var at: Date = Date()
+
+        var tierLabel: String { AppState.tierLabels[min(3, max(0, tier))] }
+    }
+
+    /// A press or release for the on-screen keyboard. `serial` changes on every
+    /// event so a repeated key still notifies the view.
+    struct KeyPulse: Equatable {
+        var serial: UInt64
+        var keyCode: CGKeyCode
+        var down: Bool
+        var travel: Double
+        var tier: Int
+        var measured: Bool
+    }
+
+    /// Recent keystrokes, newest first, for the "what just happened" list.
+    @Published var recentHits: [KeyHit] = []
+    /// The keystroke currently being animated.
+    @Published var activeHit: KeyHit?
+    /// Latest press or release. The keyboard view springs the matching cap.
+    @Published var keyPulse: KeyPulse?
+    /// Settings asks the app delegate to open the keyboard window.
+    var presentKeyboard: (() -> Void)?
+
+    private var pulseSerial: UInt64 = 0
+    private let pulseLock = NSLock()
+
     // MARK: published state
 
     @Published var isEnabled = Settings.enabled
@@ -28,6 +70,11 @@ final class AppState: ObservableObject {
     @Published var sensorRunning = false
     @Published var sensorRateHz: Double = 0
     @Published var tapAuthorized = false
+
+    /// True when the tap object exists but no key events arrive while the
+    /// accelerometer does hear impacts: macOS is dropping them, which means the
+    /// Accessibility grant belongs to a different copy of the app.
+    @Published var tapDeaf = false
 
     @Published var telemetry = ForceDetector.Telemetry()
     @Published var audioRate = 48000
@@ -74,7 +121,7 @@ final class AppState: ObservableObject {
         if packs.isEmpty {
             Log.error("no sound packs found in \(PackInfo.searchRoots().map { $0.path }.joined(separator: ", "))")
         }
-        Log.info("keystrike starting up; \(packs.count) packs available")
+        Log.info("thocky starting up; \(packs.count) packs available")
 
         /* enable() owns its timers, so it can start (or restart) them safely. */
         if isEnabled { enable() } else { startTimers() }
@@ -126,6 +173,13 @@ final class AppState: ObservableObject {
         }
         sensorRunning = sensor.isRunning
 
+        /* macOS will only show this dialog a few times ever, so ask once per
+           launch while the grant is missing; the retry timer below picks it up
+           the moment the user toggles the switch. */
+        if !KeyboardTap.hasPermission {
+            Log.info("no Accessibility trust for this binary yet; prompting")
+            requestAccessibility()
+        }
         ensureTap()
         startTimers()
     }
@@ -162,8 +216,13 @@ final class AppState: ObservableObject {
         let made = newTap.createAndEnable()
         tap = newTap
         if !made {
-            notice = "Keystrike needs Accessibility permission to hear your keyboard."
-            Log.error("event tap creation failed")
+            notice = "Thocky needs Accessibility permission to hear your keyboard."
+            Log.error("event tap creation failed " +
+                      "(AXIsProcessTrusted=\(KeyboardTap.hasPermission), " +
+                      "bundle=\(Bundle.main.bundleIdentifier ?? "none"), " +
+                      "exec=\(Bundle.main.executablePath ?? "none"))")
+        } else {
+            Log.info("event tap created (\(Bundle.main.executablePath ?? "?"))")
         }
     }
 
@@ -183,16 +242,26 @@ final class AppState: ObservableObject {
 
         var score: Double
         var sourceSensor = true
+        var peakG = 0.0
         if let reading = detector.reading(at: now) {
             score = reading.score
+            peakG = reading.impact.peak
         } else {
             sourceSensor = false
             score = fallbackForce ? fallbackScore(at: now) : 0.35
         }
 
         let (lo, hi, mix) = Self.tiers(for: score)
+        let shown = mix >= 0.5 ? hi : lo
+        let pan = KeyLayout.pan(for: keyCode)
+        let dist = KeyLayout.distance(for: keyCode)
         engine.play(group: group, tierLo: lo, tierHi: hi, mix: mix,
-                    event: Int(KS_EVENT_PRESS), gain: gain)
+                    event: Int(KS_EVENT_PRESS), gain: gain, pan: pan, dist: dist)
+
+        record(hit: KeyHit(keyCode: keyCode,
+                           label: keyLabel(keyCode),
+                           group: group, tier: shown, score: score, peakG: peakG,
+                           pan: pan, dist: dist, measured: sourceSensor))
 
         statsLock.lock()
         played += 1
@@ -205,14 +274,54 @@ final class AppState: ObservableObject {
     }
 
     private func handleKeyUp(_ keyCode: CGKeyCode) {
+        publishRelease(keyCode)
         guard releaseSounds else { return }
         let now = UInt64(mach_absolute_time())
         let group = KeyMap.group(for: keyCode)
         var score: Double = 0.3
         if let reading = detector.reading(at: now) { score = reading.score }
         let (lo, hi, mix) = Self.tiers(for: score * 0.6)
+        let pan = KeyLayout.pan(for: keyCode)
+        let dist = KeyLayout.distance(for: keyCode)
         engine.play(group: group, tierLo: lo, tierHi: hi, mix: mix,
-                    event: Int(KS_EVENT_RELEASE), gain: 0.5)
+                    event: Int(KS_EVENT_RELEASE), gain: 0.5, pan: pan, dist: dist)
+    }
+
+    private func keyLabel(_ keyCode: CGKeyCode) -> String {
+        if let label = KeyLayout.position(for: keyCode)?.label, !label.isEmpty { return label }
+        return KeyMap.name(for: keyCode)
+    }
+
+    /// Records a keystroke on the main thread for the UI, and sinks the keycap.
+    private func record(hit: KeyHit) {
+        let travel = 0.34 + 0.66 * min(1, max(0, hit.score))
+        let pulse = nextPulse(code: hit.keyCode, down: true, travel: travel,
+                              tier: hit.tier, measured: hit.measured)
+        onMain { [weak self] in
+            guard let self else { return }
+            self.activeHit = hit
+            self.keyPulse = pulse
+            self.recentHits.insert(hit, at: 0)
+            if self.recentHits.count > 12 { self.recentHits.removeLast() }
+        }
+    }
+
+    private func publishRelease(_ keyCode: CGKeyCode) {
+        let pulse = nextPulse(code: keyCode, down: false, travel: 0, tier: 0, measured: true)
+        onMain { [weak self] in self?.keyPulse = pulse }
+    }
+
+    private func nextPulse(code: CGKeyCode, down: Bool, travel: Double, tier: Int, measured: Bool) -> KeyPulse {
+        pulseLock.lock()
+        pulseSerial &+= 1
+        let serial = pulseSerial
+        pulseLock.unlock()
+        return KeyPulse(serial: serial, keyCode: code, down: down,
+                        travel: travel, tier: tier, measured: measured)
+    }
+
+    private func onMain(_ body: @escaping () -> Void) {
+        if Thread.isMainThread { body() } else { DispatchQueue.main.async(execute: body) }
     }
 
     /// Force tiers from a continuous 0...1 score; boundaries at 0.25/0.5/0.75.
@@ -279,11 +388,22 @@ final class AppState: ObservableObject {
 
     func testPlay(tier: Int) {
         ensurePack()
-        engine.play(group: KeyMap.generic, tierLo: tier, tierHi: tier, mix: 0,
-                    event: Int(KS_EVENT_PRESS), gain: 1.0)
-        usleep(120_000)
-        engine.play(group: KeyMap.generic, tierLo: tier, tierHi: tier, mix: 0,
-                    event: Int(KS_EVENT_RELEASE), gain: 0.5)
+        let tier = min(3, max(0, tier))
+        let code: CGKeyCode = 49
+        let score = [0.12, 0.40, 0.68, 0.96][tier]
+        let pan = KeyLayout.pan(for: code)
+        let dist = KeyLayout.distance(for: code)
+        engine.play(group: KeyMap.space, tierLo: tier, tierHi: tier, mix: 0,
+                    event: Int(KS_EVENT_PRESS), gain: 1.0, pan: pan, dist: dist)
+        record(hit: KeyHit(keyCode: code, label: "space", group: KeyMap.space, tier: tier,
+                           score: score, peakG: 0, pan: pan, dist: dist, measured: false))
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            usleep(110_000)
+            guard let self else { return }
+            self.engine.play(group: KeyMap.space, tierLo: tier, tierHi: tier, mix: 0,
+                             event: Int(KS_EVENT_RELEASE), gain: 0.5, pan: pan, dist: dist)
+            self.publishRelease(code)
+        }
     }
 
     /// Plays a plausible typing stream, for machines where the event tap has no
@@ -293,19 +413,32 @@ final class AppState: ObservableObject {
             guard let self else { return }
             let end = Date().addingTimeInterval(seconds)
             var i = 0
+            let pattern: [(CGKeyCode, Int)] = [
+                (3, KeyMap.generic), (38, KeyMap.generic), (40, KeyMap.generic),
+                (12, KeyMap.generic), (49, KeyMap.space), (36, KeyMap.enter),
+                (51, KeyMap.backspace), (1, KeyMap.generic)
+            ]
             while Date() < end {
-                let score = Double.random(in: 0.05...1.0)
+                let score = Double.random(in: 0.08...1.0)
                 let (lo, hi, mix) = Self.tiers(for: score)
-                let group = [KeyMap.generic, KeyMap.enter, KeyMap.space, KeyMap.backspace][i % 4]
+                let shown = mix >= 0.5 ? hi : lo
+                let pair = pattern[i % pattern.count]
+                let code = pair.0
+                let group = pair.1
+                let pan = KeyLayout.pan(for: code)
+                let dist = KeyLayout.distance(for: code)
                 self.engine.play(group: group, tierLo: lo, tierHi: hi, mix: mix,
-                                 event: Int(KS_EVENT_PRESS), gain: 1.0)
-                if i % 2 == 0 {
-                    usleep(40_000)
-                    self.engine.play(group: group, tierLo: lo, tierHi: hi, mix: 0,
-                                     event: Int(KS_EVENT_RELEASE), gain: 0.5)
-                }
+                                 event: Int(KS_EVENT_PRESS), gain: 1.0, pan: pan, dist: dist)
+                let label = KeyLayout.position(for: code)?.label ?? "key"
+                self.record(hit: KeyHit(keyCode: code, label: label.isEmpty ? "space" : label,
+                                        group: group, tier: shown, score: score, peakG: 0,
+                                        pan: pan, dist: dist, measured: false))
+                usleep(70_000)
+                self.engine.play(group: group, tierLo: lo, tierHi: hi, mix: 0,
+                                 event: Int(KS_EVENT_RELEASE), gain: 0.5, pan: pan, dist: dist)
+                self.publishRelease(code)
                 i += 1
-                usleep(UInt32.random(in: 55_000...135_000))
+                usleep(UInt32.random(in: 40_000...90_000))
             }
             DispatchQueue.main.async { onDone?() }
         }
@@ -511,10 +644,28 @@ final class AppState: ObservableObject {
         let stats = engine.stats
         let tele = detector.telemetry()
         let peak = tele.magnitudeHistory.max() ?? 0
+
+        /* macOS happily *creates* an event tap for an untrusted process and then
+           drops every event in silence: the app looks like it is listening and
+           hears nothing at all. The accelerometer is an independent witness, so
+           if impacts are arriving while keys are not, the tap is deaf and the
+           Accessibility grant is attached to some other copy of the app. */
+        if played == 0 && tele.impactCount >= 2 {
+            if !tapDeaf {
+                tapDeaf = true
+                Log.warn("keyboard tap is deaf: \(tele.impactCount) impacts heard " +
+                         "from the accelerometer, 0 key events from the tap")
+            }
+        } else if played > 0 && tapDeaf {
+            tapDeaf = false
+            Log.info("keyboard tap is hearing keys again")
+        }
+
         Log.info(String(
-            format: "heartbeat: renders=%llu voices=%llu dropped=%llu keys=%d sensor=%dHz samples=%lld mag=%.4f peak=%.4f noise=%.5f",
+            format: "heartbeat: renders=%llu voices=%llu dropped=%llu keys=%d sensor=%dHz samples=%lld mag=%.4f peak=%.4f noise=%.5f tap=%d trust=%d",
             stats.renderCalls, stats.voicesStarted, stats.dropped, played,
             Int(sensor.sampleRateHz), sensor.sampleCount,
-            tele.lastMagnitude, peak, tele.noiseFloor))
+            tele.lastMagnitude, peak, tele.noiseFloor,
+            tapAuthorized ? 1 : 0, KeyboardTap.hasPermission ? 1 : 0))
     }
 }

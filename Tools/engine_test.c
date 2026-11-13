@@ -77,7 +77,8 @@ static int render_offline(const char *dir, const char *out, double seconds) {
         for (int i = 0; i < n_script; i++) {
             if (script[i].at >= now && script[i].at < now + block) {
                 int tier = script[i].tier;
-                ks_play(p, script[i].group, tier, tier, 0.0f, script[i].event, 1.0f);
+                ks_play(p, script[i].group, tier, tier, 0.0f, script[i].event, 1.0f,
+                        (float)(script[i].group - 1) * 0.35f, 0.25f);
                 triggered++;
             }
         }
@@ -137,9 +138,9 @@ int main(int argc, char **argv) {
     static const char *tiers[4] = { "soft", "medium", "hard", "slam" };
     for (int t = 0; t < 4; t++) {
         printf("  %s\n", tiers[t]);
-        ks_play(p1, KS_GROUP_GENERIC, t, t, 0.0f, KS_EVENT_PRESS, 1.0f);
+        ks_play(p1, KS_GROUP_GENERIC, t, t, 0.0f, KS_EVENT_PRESS, 1.0f, (float)t / 3.0f - 0.5f, 0.2f);
         usleep(260000);
-        ks_play(p1, KS_GROUP_GENERIC, t, t, 0.0f, KS_EVENT_RELEASE, 0.5f);
+        ks_play(p1, KS_GROUP_GENERIC, t, t, 0.0f, KS_EVENT_RELEASE, 0.5f, 0.0f, 0.2f);
         usleep(340000);
     }
 
@@ -150,18 +151,18 @@ int main(int argc, char **argv) {
         if (hi < lo) { int tmp = lo; lo = hi; hi = tmp; }
         float mix = (hi > lo) ? (float)(rand() % 100) / 100.0f : 0.0f;
         int group = (int[]){ 0, 1, 2, 3 }[rand() % 4];
-        ks_play(p1, group, lo, hi, mix, KS_EVENT_PRESS, 1.0f);
-        if (i % 3 == 0) ks_play(p1, group, lo, hi, 0.0f, KS_EVENT_RELEASE, 0.45f);
+        ks_play(p1, group, lo, hi, mix, KS_EVENT_PRESS, 1.0f, ((i % 5) - 2) / 2.0f, (i % 3) / 2.0f);
+        if (i % 3 == 0) ks_play(p1, group, lo, hi, 0.0f, KS_EVENT_RELEASE, 0.45f, 0.0f, 0.2f);
         usleep(60000 + (rand() % 90) * 1000);
     }
 
     if (p2) {
         printf("  second pack (cache check)\n");
         for (int i = 0; i < 6; i++) {
-            ks_play(p2, KS_GROUP_GENERIC, i % 4, i % 4, 0.0f, KS_EVENT_PRESS, 1.0f);
+            ks_play(p2, KS_GROUP_GENERIC, i % 4, i % 4, 0.0f, KS_EVENT_PRESS, 1.0f, -0.4f, 0.1f);
             usleep(150000);
         }
-        ks_play(p1, KS_GROUP_GENERIC, 3, 3, 0.0f, KS_EVENT_PRESS, 1.0f);
+        ks_play(p1, KS_GROUP_GENERIC, 3, 3, 0.0f, KS_EVENT_PRESS, 1.0f, 0.6f, 0.4f);
         usleep(200000);
         ks_pack_release(p2);
     }

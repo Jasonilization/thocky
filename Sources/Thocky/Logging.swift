@@ -1,6 +1,6 @@
 import Foundation
 
-/// Minimal append-only file logger: `~/Library/Logs/Keystrike/keystrike.log`.
+/// Minimal append-only file logger: `~/Library/Logs/Thocky/thocky.log`.
 ///
 /// The app has no visible console, so everything that would normally go to
 /// stdout/stderr lands here. `THOCK_DEBUG=1` (or the "Verbose logging" menu
@@ -11,12 +11,13 @@ final class Log {
 
     static func info(_ message: @autoclosure () -> String) { shared.write { message() } }
     static func debug(_ message: @autoclosure () -> String) { if verbose { shared.write { "[debug] \(message())" } } }
+    static func warn(_ message: @autoclosure () -> String) { shared.write { "[warn] \(message())" } }
     static func error(_ message: @autoclosure () -> String) { shared.write { "[error] \(message())" } }
     static func clear() {
         try? FileManager.default.removeItem(atPath: shared.path)
     }
 
-    private let queue = DispatchQueue(label: "keystrike.log", qos: .utility)
+    private let queue = DispatchQueue(label: "thocky.log", qos: .utility)
     private let path: String
     private let dateFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -26,8 +27,8 @@ final class Log {
 
     private init() {
         let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/Keystrike", isDirectory: true)
-        path = dir.appendingPathComponent("keystrike.log").path
+            .appendingPathComponent("Library/Logs/Thocky", isDirectory: true)
+        path = dir.appendingPathComponent("thocky.log").path
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }
 

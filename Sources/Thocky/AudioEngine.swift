@@ -78,13 +78,15 @@ final class AudioEngine {
     // MARK: playback
 
     /// Trigger one clip. `tierLo`/`tierHi` + `mix` express continuous force: mix 0
-    /// is fully tierLo, 1 is fully tierHi.
-    func play(group: Int, tierLo: Int, tierHi: Int, mix: Float, event: Int, gain: Float) {
+    /// is fully tierLo, 1 is fully tierHi. `pan` places it in the stereo field and
+    /// `dist` is 0 (front row) .. 1 (back row).
+    func play(group: Int, tierLo: Int, tierHi: Int, mix: Float, event: Int, gain: Float,
+              pan: Float = 0, dist: Float = 0) {
         lock.lock()
         let pack = packPointer
         lock.unlock()
         guard let pack else { return }
-        ks_play(pack, Int32(group), Int32(tierLo), Int32(tierHi), mix, Int32(event), gain)
+        ks_play(pack, Int32(group), Int32(tierLo), Int32(tierHi), mix, Int32(event), gain, pan, dist)
     }
 
     // MARK: diagnostics

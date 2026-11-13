@@ -6,17 +6,17 @@ enum Settings {
     private static let defaults = UserDefaults.standard
 
     enum Key {
-        static let enabled        = "keystrike.enabled"
-        static let volume         = "keystrike.volume"
-        static let sensitivity    = "keystrike.sensitivity"
-        static let packID         = "keystrike.pack"
-        static let releaseSounds  = "keystrike.releaseSounds"
-        static let softCeiling    = "keystrike.softCeiling"
-        static let slamFloor      = "keystrike.slamFloor"
-        static let calibrated     = "keystrike.calibrated"
-        static let idlePause      = "keystrike.idlePause"
-        static let launchAtLogin  = "keystrike.launchAtLogin"
-        static let fallbackMode   = "keystrike.fallbackForce"
+        static let enabled        = "thocky.enabled"
+        static let volume         = "thocky.volume"
+        static let sensitivity    = "thocky.sensitivity"
+        static let packID         = "thocky.pack"
+        static let releaseSounds  = "thocky.releaseSounds"
+        static let softCeiling    = "thocky.softCeiling"
+        static let slamFloor      = "thocky.slamFloor"
+        static let calibrated     = "thocky.calibrated"
+        static let idlePause      = "thocky.idlePause"
+        static let launchAtLogin  = "thocky.launchAtLogin"
+        static let fallbackMode   = "thocky.fallbackForce"
     }
 
     static var enabled: Bool {

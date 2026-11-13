@@ -5,17 +5,22 @@ import CoreGraphics
 ///
 /// This is the only part of the app that sees key events at all. It needs
 /// Accessibility permission, never sees typed content beyond keyCode, and does
-/// not block or modify the event stream.
+/// not block or modify the event stream. The tap is listen-only, so a slow
+/// force reading cannot stall the keys the user is actually typing.
 final class KeyboardTap {
     private let onKeyDown: (CGKeyCode, Bool) -> Void
     private let onKeyUp: (CGKeyCode) -> Void
     private let onStatusChange: (Bool) -> Void
 
     private var machPort: CFMachPort?
+    private var runLoop: CFRunLoop?
+    private let loopLock = NSLock()
     private var thread: Thread?
     private var boxedSelf: UnsafeMutableRawPointer?
     private(set) var isEnabled = false
     private(set) var lastError: String?
+    private var heldModifiers = Set<CGKeyCode>()
+    private var lastCaps: Date?
 
     init(onKeyDown: @escaping (CGKeyCode, Bool) -> Void,
          onKeyUp: @escaping (CGKeyCode) -> Void,
@@ -24,6 +29,8 @@ final class KeyboardTap {
         self.onKeyUp = onKeyUp
         self.onStatusChange = onStatusChange
     }
+
+    deinit { destroy() }
 
     /// Accessibility permission, without prompting.
     static var hasPermission: Bool { AXIsProcessTrusted() }
@@ -57,7 +64,7 @@ final class KeyboardTap {
         guard let machPort = CGEvent.tapCreate(
             tap: .cghidEventTap,
             place: .headInsertEventTap,
-            options: .defaultTap,
+            options: .listenOnly,
             eventsOfInterest: mask,
             callback: keyboardTapCallback,
             userInfo: box
@@ -78,31 +85,56 @@ final class KeyboardTap {
     }
 
     func destroy() {
-        if let machPort {
-            CGEvent.tapEnable(tap: machPort, enable: false)
-            CFMachPortInvalidate(machPort)
-            self.machPort = nil
+        let port = machPort
+        machPort = nil
+        if let port {
+            CGEvent.tapEnable(tap: port, enable: false)
+            CFMachPortInvalidate(port)
         }
-        isEnabled = false
-        onStatusChange(false)
-        /* the run loop thread exits when its source is invalidated */
+        let loop = takeRunLoop()
+        if let loop { CFRunLoopStop(loop) }
+        thread = nil
+        heldModifiers.removeAll()
+        if isEnabled {
+            isEnabled = false
+            onStatusChange(false)
+        }
         if let boxedSelf {
-            Unmanaged<KeyboardTap>.fromOpaque(boxedSelf).release()
             self.boxedSelf = nil
+            Unmanaged<KeyboardTap>.fromOpaque(boxedSelf).release()
         }
+    }
+
+    private func takeRunLoop() -> CFRunLoop? {
+        loopLock.lock()
+        defer { loopLock.unlock() }
+        let loop = runLoop
+        runLoop = nil
+        return loop
+    }
+
+    private func storeRunLoop(_ loop: CFRunLoop) {
+        loopLock.lock()
+        runLoop = loop
+        loopLock.unlock()
     }
 
     private func runTapOnDedicatedThread(_ machPort: CFMachPort) {
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, machPort, 0)
         let t = Thread { [weak self] in
-            let runLoop = CFRunLoopGetCurrent()
-            CFRunLoopAddSource(runLoop, source, .defaultMode)
+            guard let runLoop = CFRunLoopGetCurrent() else { return }
+            self?.storeRunLoop(runLoop)
+            if let source {
+                CFRunLoopAddSource(runLoop, source, .defaultMode)
+            }
             CFRunLoopRun()
-            CFRunLoopRemoveSource(runLoop, source, .defaultMode)
+            if let source {
+                CFRunLoopRemoveSource(runLoop, source, .defaultMode)
+            }
             self?.isEnabled = false
         }
-        t.name = "keystrike.tap"
-        t.qualityOfService = .userInteractive
+        t.name = "thocky.tap"
+        t.qualityOfService = QualityOfService.userInteractive
         thread = t
         t.start()
     }
@@ -124,15 +156,67 @@ final class KeyboardTap {
             let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
             onKeyUp(keyCode)
             return Unmanaged.passUnretained(event)
+        case .flagsChanged:
+            handleFlags(event)
+            return Unmanaged.passUnretained(event)
         default:
             return Unmanaged.passUnretained(event)
+        }
+    }
+
+    /// Shift, control, option, command and fn arrive as `flagsChanged`, not as
+    /// key down / key up. Caps lock only reports the toggle, so it is a click.
+    private func handleFlags(_ event: CGEvent) {
+        let code = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        if code == 57 {
+            let now = Date()
+            if let lastCaps, now.timeIntervalSince(lastCaps) < 0.08 { return }
+            lastCaps = now
+            onKeyDown(code, false)
+            onKeyUp(code)
+            return
+        }
+        let down: Bool
+        if let bit = Self.deviceBit(for: code) {
+            down = (event.flags.rawValue & bit) != 0
+        } else if code == 63 {
+            down = event.flags.contains(.maskSecondaryFn)
+        } else {
+            return
+        }
+        let was = heldModifiers.contains(code)
+        if down && !was {
+            heldModifiers.insert(code)
+            onKeyDown(code, false)
+        } else if !down && was {
+            heldModifiers.remove(code)
+            onKeyUp(code)
+        }
+    }
+
+    /// Device-dependent modifier bits from `NSEvent` / `IOLLEvent.h`.
+    /// Left and right share a public flag, so the side has to come from these.
+    private static func deviceBit(for keyCode: CGKeyCode) -> UInt64? {
+        switch Int(keyCode) {
+        case 56: return 0x0002  // left shift
+        case 60: return 0x0004  // right shift
+        case 59: return 0x0001  // left control
+        case 62: return 0x2000  // right control
+        case 58: return 0x0020  // left option
+        case 61: return 0x0040  // right option
+        case 55: return 0x0008  // left command
+        case 54: return 0x0010  // right command
+        default: return nil
         }
     }
 }
 
 /// C shim: forwards CGEventTap callbacks into `KeyboardTap.handle`.
-private let keyboardTapCallback: CGEventTapCallBack = { proxy, type, event, ctx in
+/// The extra retain keeps the tap alive if `destroy` races a callback.
+private let keyboardTapCallback: CGEventTapCallBack = { _, type, event, ctx in
     guard let ctx else { return Unmanaged.passUnretained(event) }
     let tap = Unmanaged<KeyboardTap>.fromOpaque(ctx).takeUnretainedValue()
+    let hold = Unmanaged.passRetained(tap)
+    defer { hold.release() }
     return tap.handle(type: type, event: event) ?? Unmanaged.passUnretained(event)
 }
