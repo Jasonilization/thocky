@@ -390,17 +390,44 @@ final class AppState: ObservableObject {
         }
 
         let recorded = detector.recordedImpacts
-        Log.info(String(format: "force test: %d of 5 bursts detected", recorded.count))
-        for (i, hit) in recorded.enumerated() {
-            Log.info(String(format: "  impact %d: peak=%.3f g score=%.2f tier=%d %@",
-                            i + 1, hit.peak, hit.score, Self.tiers(for: hit.score).lo,
-                            Self.tierLabels[Self.tiers(for: hit.score).lo]))
+
+        /* Match each injected burst to the impact it produced. Peaks far from
+           any burst are real desk noise (fans, the machine being handled) and
+           are reported as such rather than counted as misses. */
+        var matched: [(label: String, expected: Double, peak: Double, score: Double)] = []
+        var used = Array(repeating: false, count: recorded.count)
+        for burst in bursts {
+            guard let idx = recorded.enumerated().first(where: { pair in
+                !used[pair.offset] && abs(pair.element.peak - burst.peak) < burst.peak * 0.6
+            })?.offset else { continue }
+            used[idx] = true
+            let hit = recorded[idx]
+            matched.append((burst.label, burst.peak, hit.peak, hit.score))
         }
-        let scores = recorded.map { $0.score }
+
+        for (i, m) in matched.enumerated() {
+            let tier = Self.tiers(for: m.score)
+            Log.info(String(format: "  burst %d (%@): expected %.3f g, measured %.3f g, score %.2f, tier %d %@",
+                            i + 1, m.label, m.expected, m.peak, m.score, tier.lo,
+                            Self.tierLabels[tier.lo]))
+        }
+        let noise = recorded.enumerated().filter { !used[$0.offset] }
+        for n in noise {
+            Log.info(String(format: "  (desk noise: %.3f g, below the burst set)", n.element.peak))
+        }
+        Log.info(String(format: "force test: %d/%d bursts matched, %d desk-noise impacts",
+                        matched.count, bursts.count, noise.count))
+
+        guard matched.count == bursts.count else {
+            Log.error("force test: FAIL - not every burst was detected")
+            return
+        }
+        let scores = matched.map { $0.score }
         let monotonic = scores.sorted() == scores
-        Log.info(monotonic
+        let sane = matched.allSatisfy { $0.peak > 0.004 && $0.score <= 1.0 }
+        Log.info(monotonic && sane
                  ? "force test: PASS - scores rise monotonically with input force"
-                 : "force test: WARN - scores are not monotonic (check thresholds)")
+                 : "force test: FAIL - scores are not monotonic, or a peak is implausible")
     }
 
     func startCalibration() {
