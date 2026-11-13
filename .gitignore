@@ -1,4 +1,5 @@
-# build artefacts
+# build artefacts - note .build/app/ holds the assembled bundles, which
+# survives SwiftPM rebuilding the product directories underneath .build/release
 .build/
 .swiftpm/
 *.o

@@ -133,6 +133,12 @@ final class AppState: ObservableObject {
     func disable() {
         isEnabled = false
         Settings.enabled = false
+        shutDown()
+    }
+
+    /// Stops everything without touching preferences, so quitting does not
+    /// silently disable the app for its next launch.
+    func shutDown() {
         sensor.stop()
         sensorRunning = false
         tap?.destroy()

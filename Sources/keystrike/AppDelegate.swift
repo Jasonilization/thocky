@@ -17,7 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         Log.info("keystrike shutting down")
-        app.disable()
+        app.shutDown()
         app.engine.shutdown()
     }
 

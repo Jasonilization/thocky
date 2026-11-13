@@ -21,16 +21,16 @@ esac
 echo "[build] swift build -c $configuration"
 swift build -c "$configuration" 2>&1 | tail -5
 
-products="$root/.build/$configuration"
-executable="$products/keystrike"
+products="$root/.build/app/$configuration"
+executable="$root/.build/$configuration/keystrike"
 [[ -x "$executable" ]] || { echo "[build] missing executable: $executable" >&2; exit 1; }
 
 app="$products/Keystrike.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 
+# C targets are linked statically, so nothing from .build/ needs shipping.
 cp "$executable" "$app/Contents/MacOS/Keystrike"
-cp "$products"/ThockAudio*.so "$app/Contents/Resources/" 2>/dev/null || true
 cp -R "$root/Resources/Packs" "$app/Contents/Resources/Packs"
 
 cat > "$app/Contents/Info.plist" <<'PLIST'

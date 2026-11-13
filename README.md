@@ -42,8 +42,10 @@ make run      # build and open it
 make dmg      # a drag-to-install Keystrike.dmg (release by default)
 ```
 
-The app is a menu-bar agent: no Dock icon, click the waveform icon for the
-menu, or `Settings…` for pack, force, audio and general panes.
+The bundle is assembled under `.build/app/<configuration>/Keystrike.app`
+rather than in SwiftPM's product directory, so a later `swift build` will not
+wipe it. Keystrike is a menu-bar agent: no Dock icon, click the waveform icon
+for the menu, or `Settings…` for pack, force, audio and general panes.
 
 ```sh
 make test-offline   # render a WAV through the engine with no output device

@@ -20,7 +20,7 @@ esac
 
 # 1. build (and ad-hoc sign) the .app
 bash scripts/build_app.sh "$configuration" >/dev/null
-app="$root/.build/$configuration/Keystrike.app"
+app="$root/.build/app/$configuration/Keystrike.app"
 [[ -d "$app" ]] || { echo "[dmg] missing $app" >&2; exit 1; }
 
 # 2. stage: the app + a symlink to /Applications

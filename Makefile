@@ -10,7 +10,7 @@
 ROOT := $(CURDIR)
 CONFIG ?= debug
 BUILD := $(ROOT)/.build/$(CONFIG)
-APP := $(BUILD)/Keystrike.app
+APP := $(ROOT)/.build/app/$(CONFIG)/Keystrike.app
 
 .PHONY: all build app dmg run packs test-audio test-offline clean sign
 
