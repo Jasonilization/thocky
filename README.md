@@ -39,6 +39,7 @@ above, because granting Accessibility permission needs a human (see
 ```sh
 make app      # swift build + Keystrike.app (ad-hoc signed, no Xcode needed)
 make run      # build and open it
+make dmg      # a drag-to-install Keystrike.dmg (release by default)
 ```
 
 The app is a menu-bar agent: no Dock icon, click the waveform icon for the
@@ -50,6 +51,10 @@ make packs          # rebuild all 16 packs from the upstream recordings
 make clean
 ```
 
+`make dmg` produces `.build/dmg/Keystrike-<version>.dmg`: the `.app` plus an
+`Applications` symlink, verified by mounting it back after writing. Nothing
+in the DMG is signed beyond the app's ad-hoc signature, so the first run needs
+a right-click → Open, then the Accessibility grant below.
 Environment variables (useful for CI and headless checks):
 
 | Variable | Effect |

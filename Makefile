@@ -12,7 +12,7 @@ CONFIG ?= debug
 BUILD := $(ROOT)/.build/$(CONFIG)
 APP := $(BUILD)/Keystrike.app
 
-.PHONY: all build app run packs test-audio test-offline clean sign
+.PHONY: all build app dmg run packs test-audio test-offline clean sign
 
 all: build
 
@@ -28,6 +28,10 @@ app: | packs
 
 run: app
 	open "$(APP)"
+
+# A drag-to-install image: the .app plus an Applications symlink.
+dmg:
+	bash scripts/build_dmg.sh $(CONFIG)
 
 # Engine sources, compiled directly (fewer files than reusing SwiftPM objects,
 # and immune to the .o layout).
