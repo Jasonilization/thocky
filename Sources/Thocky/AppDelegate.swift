@@ -14,6 +14,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         app.presentKeyboard = { [weak self] in self?.showKeyboard() }
         buildStatusItem()
+        if ProcessInfo.processInfo.environment["THOCKY_SHOW_KEYBOARD"] != nil {
+            /* used by build scripts and demos: open the keyboard with the app */
+            showKeyboard()
+        }
         Log.info("thocky started (enabled=\(app.isEnabled), packs=\(app.packs.count))")
     }
 
@@ -90,16 +94,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                               #selector(startCalibration)))
         menu.addItem(menuItem("Show keyboard", #selector(showKeyboard), key: "k"))
         menu.addItem(.separator())
-        if app.tapDeaf {
-            let deaf = NSMenuItem(title: "⚠️ No key events: Accessibility is granted to a different Thocky — click here",
-                                  action: #selector(requestAccessibility), keyEquivalent: "")
-            deaf.attributedTitle = NSAttributedString(
-                string: deaf.title,
+        /* macOS builds the tap for an untrusted process and then drops every
+           event in silence, so a live tap object says nothing about whether the
+           app can hear. Judge by trust, not by the tap. */
+        if app.tapDeaf || !KeyboardTap.hasPermission {
+            let text = app.tapDeaf
+                ? "⚠️ No key events — Accessibility is granted to a different Thocky. Click to fix"
+                : "⚠️ Grant Accessibility — the keyboard tap cannot hear keys yet"
+            let warn = NSMenuItem(title: text, action: #selector(requestAccessibility), keyEquivalent: "")
+            warn.attributedTitle = NSAttributedString(
+                string: text,
                 attributes: [.foregroundColor: NSColor.systemRed])
-            deaf.target = self
-            menu.addItem(deaf)
-        } else if !app.tapAuthorized {
-            menu.addItem(menuItem("Grant Accessibility access…", #selector(requestAccessibility)))
+            warn.target = self
+            menu.addItem(warn)
+            menu.addItem(menuItem("Open System Settings…", #selector(openAccessibilitySettings)))
         }
         menu.addItem(menuItem("Settings…", #selector(openSettings), key: ","))
         menu.addItem(menuItem("Open log", #selector(openLog)))
@@ -186,6 +194,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         keyboardWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func openAccessibilitySettings() {
+        KeyboardTap.openAccessibilitySettings()
+        rebuildMenu()
     }
 
     @objc private func openLog() {
